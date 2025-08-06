@@ -35,6 +35,56 @@ export default function Working3DCanvas({
   const textureRef = useRef<THREE.Mesh | null>(null);
   const animationIdRef = useRef<number | null>(null);
   const isInitializedRef = useRef(false);
+  const currentModelPathRef = useRef<string>("");
+
+  // Clear all models from scene
+  const clearAllModels = useCallback(() => {
+    if (!sceneRef.current) return;
+
+    console.log("Clearing all models from scene");
+
+    // Remove all objects except lights, camera, and ground
+    const objectsToRemove: THREE.Object3D[] = [];
+    sceneRef.current.traverse((child) => {
+      if (
+        child !== sceneRef.current &&
+        !(child instanceof THREE.Light) &&
+        !(child instanceof THREE.Camera) &&
+        child.name !== "ground"
+      ) {
+        objectsToRemove.push(child);
+      }
+    });
+
+    // Remove and dispose objects
+    objectsToRemove.forEach((obj) => {
+      sceneRef.current!.remove(obj);
+      if (obj instanceof THREE.Mesh) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((material) => {
+              if (material.map) material.map.dispose();
+              material.dispose();
+            });
+          } else {
+            if (obj.material.map) obj.material.map.dispose();
+            obj.material.dispose();
+          }
+        }
+      }
+    });
+
+    // Clear references
+    modelRef.current = null;
+    textureRef.current = null;
+    currentModelPathRef.current = "";
+
+    // Force render
+    if (rendererRef.current && sceneRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+  }, []);
 
   // Initialize the 3D scene (only once)
   const initializeScene = useCallback(() => {
@@ -118,6 +168,7 @@ export default function Working3DCanvas({
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -12;
     ground.receiveShadow = true;
+    ground.name = "ground"; // Add name to identify it
     scene.add(ground);
 
     // Animation loop
@@ -156,11 +207,16 @@ export default function Working3DCanvas({
   const loadModel = useCallback(() => {
     if (!sceneRef.current || !modelPath) return;
 
-    // Remove existing model
-    if (modelRef.current) {
-      sceneRef.current.remove(modelRef.current);
-      modelRef.current = null;
+    // Only reload if the model path has actually changed
+    if (currentModelPathRef.current === modelPath && modelRef.current) {
+      console.log("Same model selected, skipping reload");
+      return;
     }
+
+    console.log("Loading new model:", modelPath);
+
+    // Clear all existing models and textures
+    clearAllModels();
 
     const loader = new GLTFLoader();
     console.log("Loading model from:", modelPath);
@@ -187,8 +243,12 @@ export default function Working3DCanvas({
             // Dispose old material to prevent memory leaks
             if (child.material) {
               if (Array.isArray(child.material)) {
-                child.material.forEach((material) => material.dispose());
+                child.material.forEach((material) => {
+                  if (material.map) material.map.dispose();
+                  material.dispose();
+                });
               } else {
+                if (child.material.map) child.material.map.dispose();
                 child.material.dispose();
               }
             }
@@ -222,6 +282,8 @@ export default function Working3DCanvas({
         if (sceneRef.current) {
           sceneRef.current.add(model);
           modelRef.current = model;
+          currentModelPathRef.current = modelPath; // Track current model path
+          console.log("New model added to scene:", modelPath);
         }
 
         console.log("Model added to scene");
@@ -239,7 +301,7 @@ export default function Working3DCanvas({
         setIsLoaded(false);
       }
     );
-  }, [modelPath, fabricColor, onModelLoad]);
+  }, [modelPath, onModelLoad, clearAllModels]); // Added clearAllModels to dependencies
 
   // Update texture overlay (real-time updates)
   const updateTexture = useCallback(() => {
@@ -338,7 +400,7 @@ export default function Working3DCanvas({
     return cleanup;
   }, [initializeScene]);
 
-  // Load model when modelPath changes
+  // Load model when modelPath changes (only for different models)
   useEffect(() => {
     if (isInitializedRef.current) {
       loadModel();
